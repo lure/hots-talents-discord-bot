@@ -1,7 +1,8 @@
-package main
+package google
 
 import (
 	"context"
+	"go-discord-bot/stringutils"
 	"strings"
 
 	"google.golang.org/api/option"
@@ -14,20 +15,11 @@ import (
 
 var FanBuilds map[string]map[string]string
 
-func parseFanGoogleSheet() map[string]map[string]string {
+func FetchFanGoogleSheet(apiKey string, spreadSheetID string, readRange []string) map[string]map[string]string {
 	builds := make(map[string]map[string]string)
-	apiKey := "AIzaSyClDshTtfadZdct-PxZ8Oqx4w2fkbBzqwc"
 	srv, err := sheets.NewService(context.Background(), option.WithAPIKey(apiKey))
 	if err != nil {
 		panic(err)
-	}
-
-	spreadSheetID := "1kiHfe0obByIt5qBvLNeVwrKr2SLl_laTCDqbfJwI9X8"
-	readRange := []string{
-		"B3:C40",
-		"F3:G40",
-		"J3:K40",
-		"N3:O27",
 	}
 
 	for _, rng := range readRange {
@@ -39,7 +31,7 @@ func parseFanGoogleSheet() map[string]map[string]string {
 
 		for _, row := range resp.Values {
 			rawName := strings.Split(row[1].(string), ",")[1]
-			hero := normalize(rawName)
+			hero := stringutils.Normalize(rawName)
 			if _, ok := builds[hero]; !ok {
 				builds[hero] = make(map[string]string)
 			}
@@ -49,10 +41,4 @@ func parseFanGoogleSheet() map[string]map[string]string {
 
 	FanBuilds = builds
 	return builds
-
-	// for key, value := range builds {
-	// 	fmt.Println(key)
-	// 	fmt.Println(value)
-	// 	break
-	// }
 }

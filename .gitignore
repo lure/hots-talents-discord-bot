@@ -1,2 +1,5 @@
 .vscode
-*.exe
+go-discord-bot*
+local.creds
+cache
+*.json
