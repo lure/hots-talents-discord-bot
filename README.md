@@ -10,7 +10,3 @@ To add the bot use this [link](https://discord.com/api/oauth2/authorize?client_i
 
 Quick dive into go language.
 The goal was to build fully working imlementation in under 4 hours.
-
-Would be interestinng to:
- - fetch github consts and meta async (goroutines) 
- - fetch google resources async in relation to github 
