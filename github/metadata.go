@@ -2,11 +2,13 @@ package github
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go-discord-bot/stringutils"
 	"io"
 	"log"
 	"net/http"
+	"sync"
 
 	"strings"
 )
@@ -22,8 +24,6 @@ type HeroMeta struct {
 	Portrait string
 	Talents  [][]string
 }
-
-var TalentsDictionary TalentsType
 
 // / ----------------- Talent Localized Consts ---------------
 type talentNamesJson struct {
@@ -49,46 +49,74 @@ type talentStructJson struct {
 	Sort   int    `json:"sort"`
 }
 
-func ReadTalentSystemFromGithub(talentsUrl, constanstUrl string, useCache bool) TalentsType {
-	var talents TalentsType
-	var err error
-	writeCache := true
-	var constantsCache cache
+func ReadTalentSystemFromGithub(talentsUrl, constanstUrl string, useCache bool) (TalentsType, error) {
+	var (
+		writeCache     = true
+		constantsCache cache
+	)
+	var localTalents TalentsType
 	if useCache {
-		talents, err = constantsCache.loadFromCache()
+		talents, err := constantsCache.loadFromCache()
 		if err != nil {
 			log.Println("Failed to read cache", err)
-			talents = fetchAndParseTalentConstants(talentsUrl, constanstUrl)
+			talents, err = fetchAndParseTalentConstants(talentsUrl, constanstUrl)
+			if err != nil {
+				return nil, err
+			}
 		} else {
 			writeCache = false
 		}
+		localTalents = talents
 	} else {
-		talents = fetchAndParseTalentConstants(talentsUrl, constanstUrl)
+		if t, err := fetchAndParseTalentConstants(talentsUrl, constanstUrl); err != nil {
+			return nil, err
+		} else {
+			localTalents = t
+		}
 	}
-
-	TalentsDictionary = talents
 
 	if useCache && writeCache {
-		constantsCache.saveParsed(talents)
+		if err := constantsCache.saveParsed(localTalents); err != nil {
+			return nil, err
+		}
 	}
-	return talents
+	return localTalents, nil
 }
 
 // TOOD goroutines - channels
-func fetchAndParseTalentConstants(talentsUrl, constanstUrl string) TalentsType {
+func fetchAndParseTalentConstants(talentsUrl, constanstUrl string) (TalentsType, error) {
 	log.Println("Reading metadata from github")
-	talentTrees := fetchTalentSystem(talentsUrl)
-	constants := fetchTalentConsts(constanstUrl)
+	var (
+		wg          sync.WaitGroup
+		talentTrees talentTreesJson
+		constants   map[string]string
+	)
+	wg.Add(2)
+	var errSys, errConst error
+	go func() {
+		defer wg.Done()
+		talentTrees, errSys = fetchTalentSystem(talentsUrl)
+	}()
+	go func() {
+		defer wg.Done()
+		constants, errConst = fetchTalentConsts(constanstUrl)
+	}()
+	wg.Wait()
+	if err := errors.Join(errSys, errConst); err != nil {
+		return nil, err
+	}
 	return traverse(talentTrees, constants)
 }
 
 // returns a map of [talentId|buttonId]->localizedTalentNames
-func fetchTalentConsts(constanstUrl string) map[string]string {
-	rawString := fetchGithubResource(constanstUrl)
-	var talentNames talentNamesJson
-	err := json.Unmarshal(rawString, &talentNames)
+func fetchTalentConsts(constantsUrl string) (map[string]string, error) {
+	rawString, err := fetchGithubResource(constantsUrl)
 	if err != nil {
-		panic(err)
+		return nil, err
+	}
+	var talentNames talentNamesJson
+	if err := json.Unmarshal(rawString, &talentNames); err != nil {
+		return nil, fmt.Errorf("can't unmarshal JSON '%s' : %w", string(rawString), err)
 	}
 
 	result := make(map[string]string)
@@ -104,46 +132,51 @@ func fetchTalentConsts(constanstUrl string) map[string]string {
 		result[key[:index-1]] = value
 	}
 
-	return result
+	return result, nil
 }
 
-func fetchTalentSystem(talentsUrl string) talentTreesJson {
-	rawTalents := fetchGithubResource(talentsUrl)
-	var talentTrees talentTreesJson
-	err := json.Unmarshal(rawTalents, &talentTrees)
+func fetchTalentSystem(talentsUrl string) (talentTreesJson, error) {
+	rawTalents, err := fetchGithubResource(talentsUrl)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return talentTrees
+	var talentTrees talentTreesJson
+	if err := json.Unmarshal(rawTalents, &talentTrees); err != nil {
+		return nil, fmt.Errorf("can't unmarshal JSON '%s' : %w", string(rawTalents), err)
+	} else {
+		return talentTrees, nil
+	}
 }
 
-func fetchGithubResource(url string) []byte {
-	resp, err := http.Get(url)
-	if err != nil {
-		panic(err)
+func fetchGithubResource(url string) ([]byte, error) {
+	resp, err := githubClient.Get(url)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("can't load url: '%s': %w", url, err)
+	case resp.StatusCode != http.StatusOK:
+		defer resp.Body.Close()
+		return nil, fmt.Errorf("can't read response: %d", resp.StatusCode)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("Status code %d is not OK for %s\n", resp.StatusCode, url)
+	if content, err := io.ReadAll(resp.Body); err != nil {
+		return nil, fmt.Errorf("can't read request body: %w", err)
+	} else {
+		return content, nil
 	}
-
-	content, err := io.ReadAll(resp.Body)
-	if err != nil {
-		panic(err)
-	}
-	return content
 }
 
 // name -> "talents" -> level1 level4 level7 level10, level13, level16, level20
-func traverse(data talentTreesJson, localizedTalentNames map[string]string) TalentsType {
+func traverse(data talentTreesJson, localizedTalentNames map[string]string) (TalentsType, error) {
 	result := make(TalentsType)
 	for _, value := range data {
-		readTalents(value, localizedTalentNames, result)
+		if _, err := readTalents(value, localizedTalentNames, result); err != nil {
+			return nil, err
+		}
 	}
-	return result
+	return result, nil
 }
 
-func readTalents(heroData heroStructJson, localizedTalentNames map[string]string, result TalentsType) TalentsType {
+func readTalents(heroData heroStructJson, localizedTalentNames map[string]string, result TalentsType) (TalentsType, error) {
 	hero := stringutils.Normalize(heroData.HyperlinkId)
 	result[hero] = HeroMeta{
 		Portrait: heroData.Portraits.Target,
@@ -153,17 +186,17 @@ func readTalents(heroData heroStructJson, localizedTalentNames map[string]string
 	for talentLevel, talents := range heroData.Talents {
 		level := extractLevel(talentLevel)
 		sortedTalents := make([]string, len(talents))
-		for _, talenDescription := range talents {
-			nameKey := talenDescription.Name + "|" + talenDescription.Button
-			readable, ok := localizedTalentNames[nameKey]
-			if !ok {
-				panic(fmt.Sprintf("No constant for %s found\n", nameKey))
+		for _, talentDescription := range talents {
+			nameKey := talentDescription.Name + "|" + talentDescription.Button
+			if readable, ok := localizedTalentNames[nameKey]; !ok {
+				return nil, fmt.Errorf("no constant found: %s", nameKey)
+			} else {
+				sortedTalents[talentDescription.Sort-1] = readable
 			}
-			sortedTalents[talenDescription.Sort-1] = readable
 		}
 		result[hero].Talents[level] = sortedTalents
 	}
-	return result
+	return result, nil
 }
 
 var levelMatch = map[string]int{"1": 0, "4": 1, "7": 2, "10": 3, "13": 4, "16": 5, "20": 6}

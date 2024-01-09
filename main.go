@@ -19,24 +19,33 @@ var appSettings = map[string]string{
 	googleApiKey: "",
 }
 
-func init() {
+var FanBuilds map[string]map[string]string
+
+var TalentsDictionary github.TalentsType
+
+// https://discord.com/api/oauth2/authorize?client_id=1189981976841699411&permissions=2112&scope=bot
+func main() {
+
 	var err error
 	_, err = readConfig("local.creds", appSettings)
 	if err != nil {
 		log.Fatal(err)
 		return
 	}
-	stringutils.InitStringUtils()
-	google.FetchFanGoogleSheet(appSettings[googleApiKey], spreadSheetID, readRange)
-	github.ReadTalentSystemFromGithub(talentsUrl, constanstUrl, true)
-}
+	if fb, err := google.FetchFanGoogleSheet(appSettings[googleApiKey], spreadSheetID, readRange); err != nil {
+		log.Fatal("Can't fetch google spreadsheet", err)
+	} else {
+		FanBuilds = fb
+	}
+	if talents, err := github.ReadTalentSystemFromGithub(talentsUrl, constanstUrl, true); err != nil {
+		log.Fatal("Can't read talents from github", err)
+	} else {
+		TalentsDictionary = talents
+	}
 
-// https://discord.com/api/oauth2/authorize?client_id=1189981976841699411&permissions=2112&scope=bot
-func main() {
 	sess, err := discordgo.New("Bot " + appSettings[botApiKey])
 	if err != nil {
 		log.Fatal(err)
-		return
 	}
 
 	installMessageListener(sess)
@@ -65,11 +74,11 @@ func installMessageListener(session *discordgo.Session) {
 		}
 
 		heroName := stringutils.PrepareName(m.Content)
-		if len(google.FanBuilds[heroName]) == 0 {
+		if len(FanBuilds[heroName]) == 0 {
 			return
 		}
 
-		prt := fmt.Sprintf(portraitUrl, github.TalentsDictionary[heroName].Portrait)
+		prt := fmt.Sprintf(portraitUrl, TalentsDictionary[heroName].Portrait)
 		thumbnail := discordgo.MessageEmbedThumbnail{
 			URL: prt,
 		}
@@ -133,12 +142,16 @@ func installReactionListener(session *discordgo.Session) {
 func makeMessageFields(heroName string) []*discordgo.MessageEmbedField {
 	flds := make([]*discordgo.MessageEmbedField, 0)
 
-	for buildName, talents := range google.FanBuilds[heroName] {
+	for buildName, talents := range FanBuilds[heroName] {
 		var buffer strings.Builder
 		// ------------------- START talents as a list
-		talentsAslist := stringutils.BuildToSevenNumbers(talents)
+		talentsAslist, err := stringutils.BuildToSevenNumbers(talents)
+		if err != nil {
+			log.Println("can't process seven numbers", err)
+			continue
+		}
 		for talentLevel, talentOrder := range talentsAslist {
-			heroData := github.TalentsDictionary[heroName].Talents[talentLevel][talentOrder-1]
+			heroData := TalentsDictionary[heroName].Talents[talentLevel][talentOrder-1]
 			buffer.WriteString(fmt.Sprintf("**[%d]** %s\n", talentOrder, heroData))
 		}
 		// ------------------- END talents as a list

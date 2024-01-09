@@ -57,7 +57,7 @@ func readConfig(credentialsPath string, options map[string]string) (result map[s
 		log.Println(err)
 	}
 
-	missedKes := []string{}
+	var missedKeys []string
 	for option := range options {
 		if c, ok := credsFromEnv[option]; ok {
 			options[option] = c
@@ -68,12 +68,12 @@ func readConfig(credentialsPath string, options map[string]string) (result map[s
 		}
 
 		if options[option] == "" {
-			missedKes = append(missedKes, option)
+			missedKeys = append(missedKeys, option)
 		}
 
 	}
-	if len(missedKes) > 0 {
-		return nil, errors.New("Some of Api keys are missing! The requred keys are [" + strings.Join(missedKes, ",") + "]")
+	if len(missedKeys) > 0 {
+		return nil, errors.New("Some of Api keys are missing! The required keys are [" + strings.Join(missedKeys, ",") + "]")
 	}
 
 	return options, nil
