@@ -1,7 +1,6 @@
 package stringutils
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -50,19 +49,17 @@ var inputToName = map[string]string{
 	"hammer":         "sgthammer",
 }
 
-var nameNormalizeRegex *regexp.Regexp
-var numbersOnlyRegex *regexp.Regexp
+var (
+	nameNormalizeRegex = must(regexp.Compile(`[\s\'\-\[\]]`))
 
-func InitStringUtils() {
-	var err error
-	nameNormalizeRegex, err = regexp.Compile(`[\s\'\-\[\]]`)
+	numbersOnlyRegex = must(regexp.Compile(`\d+`))
+)
+
+func must[T any](t T, err error) T {
 	if err != nil {
 		panic(err)
 	}
-	numbersOnlyRegex, err = regexp.Compile(`\d+`)
-	if err != nil {
-		panic(err)
-	}
+	return t
 }
 
 func Normalize(s string) string {
@@ -92,38 +89,39 @@ func GetOrDefault(key string, conversion map[string]string) string {
 func getTalentsFromBuild(build string) (string, error) {
 	numbers := numbersOnlyRegex.FindAllString(build, -1)
 	if len(numbers) != 1 {
-		return "", errors.New("Incorrect data talents: " + build)
+		return "", fmt.Errorf("incorrect data talents: %s", build)
 	}
 	return numbers[0], nil
 }
 
 // converts string "[1232131, Valla]"" to []int{1,2,3,2,1,3,1}
-func BuildToSevenNumbers(talents string) [7]int {
+func BuildToSevenNumbers(talents string) ([7]int, error) {
 	numbers := numbersOnlyRegex.FindAllString(talents, -1)
 	var result [7]int
+	// TODO shall we iterate over runes in the first digits string found?
 	for i, n := range numbers[0] {
 		v, err := strconv.Atoi(string(n))
 		if err != nil {
-			panic(err)
+			return result, fmt.Errorf("can't parse '%v' : %w", n, err)
 		}
 		result[i] = v
 	}
-	return result
+	return result, nil
 }
 
 func GetExternalLinks(hero string, talents string) map[string]string {
 
 	makePsionicTalents := func(hero string, numbers string) string {
-		var result string
+		var result strings.Builder
 		for _, n := range numbers {
-			if len(result) > 0 {
-				result += "-"
+			if result.Len() > 0 {
+				result.WriteString("-")
 			}
-			result += string(n)
+			result.WriteString(string(n))
 		}
 
 		substitutedHero := GetOrDefault(hero, nameToPsion)
-		return fmt.Sprintf(psionicStormCalculatorLink, substitutedHero, result)
+		return fmt.Sprintf(psionicStormCalculatorLink, substitutedHero, result.String())
 	}
 
 	makeIcyTalents := func(hero string, numbers string) string {
